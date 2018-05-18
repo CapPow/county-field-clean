@@ -1,4 +1,3 @@
-
 # coding: utf-8
 
 import pandas as pd
@@ -8,13 +7,6 @@ import re
 from zipfile import ZipFile
 from datetime import datetime, timedelta
 from argparse import ArgumentParser  # pass in the file path
-
-
-# the neame of the dwc archive to be cleaned (expected in symbiota format)
-toCleanZip = 'UOS_backup_2018-05-11_163415_DwC-A.zip'
-
-# what to place into incorrect county fields which cannot be inferred.
-# Realistically, empty string is probably always the best option here.
 
 # Load in the occurence data from the DWC archive.
 parser = ArgumentParser()
@@ -54,7 +46,7 @@ data.dropna(axis='index', how='any',
             subset=['county', 'country', 'stateProvince'], inplace=True)
 data = data[data.country.str.contains('United States')]
 print('dropped {} records which either lack county, state'
-      ' or are outside the US.\nLeaving {} county fields to verify...'.format(
+      ' or are outside the US.\n{} county fields to verify...'.format(
         initialDataShape[0] - data.shape[0], data.shape[0]))
 # Load in the reference data
 refDF = pd.read_csv('.//data//USA state Counties Area Reference.csv')
@@ -82,9 +74,9 @@ refDF = pd.concat([refDF, copyRow], axis=0, ignore_index=True)
 # Learn catalog pattern to filter it out later
 def learnPattern(data=data):
     # samples the 1 / 1000th of the dataset's catalogNumbers for equality.
-
     patternSet = set()
     iterationCount = 0
+    sampleSize = int(data.shape[0]/1000) + 1
     while len(patternSet) != 1:  # more than 1 unique value is an error
         iterationCount += 1  # report a count of this loop's iterations.
         if iterationCount > 1:
@@ -95,14 +87,14 @@ def learnPattern(data=data):
                   '\nRegex Patterns found:{}'.format(
                           [x.pattern for x in patternSet]))
         patternSet = set()
-        for i in range(int(len(data)/1000)):
-            regexCatNum = data.sample(1).iloc[0]['catalogNumber']
+        for i in range(sampleSize):
+            regexCatNum = data.iloc[i]['catalogNumber']
             herbPrefix = re.findall(r'\d*\D+', regexCatNum)[0]
             numericSuffix = regexCatNum.split(herbPrefix)[-1]
             p = '(' + herbPrefix + r'\d{' + str(len(numericSuffix)) + r'})'
-            # regexPattern = re.compile(p)
             regexPattern = str(p)
             patternSet.add(regexPattern)
+
     return min(patternSet)
 
 regexPattern = learnPattern()  # learn the pattern
@@ -343,18 +335,21 @@ def cleanProblemCounty(dfToRef, dfToClean, chunkSize=5000):
 # actually run the cleaning function
 cleanedDF = cleanProblemCounty(refDF, data).fillna('')
 # Report some stats on the process
-print('complete dataset = ', initialDataShape[0])
-print('problem data = ', data.shape[0])
-print('error rate(%) = ', ((data.shape[0]) / initialDataShape[0]) * 100)
-a = cleanedDF['suggested_county'] != args.problem_code
-print('suggested counties = ', cleanedDF[a].shape[0])
-print('correction rate(%) = ', (cleanedDF[a].shape[0]) / (data.shape[0]) * 100)
-b = cleanedDF['suggested_municipality'] != args.problem_code
-c = cleanedDF['suggested_municipality'] != ''
-d = cleanedDF[b & c].shape[0]
-print('suggested municipalities = ', d)
-print('municipality salvage rate(%) = ', (d) / (data.shape[0]) * 100)
-
+try:
+    print('complete dataset = ', initialDataShape[0])
+    print('problem data = ', data.shape[0])
+    print('error rate(%) = ', ((data.shape[0]) / initialDataShape[0]) * 100)
+    a = cleanedDF['suggested_county'] != args.problem_code
+    print('suggested counties = ', cleanedDF[a].shape[0])
+    print('correction rate(%) = ',
+          (cleanedDF[a].shape[0]) / (data.shape[0]) * 100)
+    b = cleanedDF['suggested_municipality'] != args.problem_code
+    c = cleanedDF['suggested_municipality'] != ''
+    d = cleanedDF[b & c].shape[0]
+    print('suggested municipalities = ', d)
+    print('municipality salvage rate(%) = ', (d) / (data.shape[0]) * 100)
+except ZeroDivisionError:
+    pass
 
 if args.review:
     # save suggested Changes for review
@@ -370,7 +365,11 @@ if args.review:
                      encoding='utf-8', index=False)
 else:
     # finalize and save suggested Changes
-    cleanedDF = cleanedDF.drop(columns=['county', 'municipality'])
+    try:
+        cleanedDF = cleanedDF.drop(columns=['county', 'municipality'])
+    except ValueError:
+        cleanedDF = cleanedDF
+
     cleanedDF = cleanedDF.rename(index=str,
                                  columns={
                                     'suggested_county': 'county',
